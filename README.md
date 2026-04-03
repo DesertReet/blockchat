@@ -1,6 +1,6 @@
 # BlockChat
 
-**Download this mod on [Modrinth](https://modrinth.com/project/block-chat)**
+### [Download this mod on Modrinth](https://modrinth.com/project/block-chat)
 
 ## Overview
 
