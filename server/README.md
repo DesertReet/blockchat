@@ -17,6 +17,10 @@ Runtime note:
 
 - This project is a web backend only. It has no Minecraft gameplay loop and no active-dimension versus inactive-dimension runtime behavior.
 
+## Microsoft device code flow
+
+BlockChat uses the OAuth 2.0 **device authorization grant** ([RFC 8628](https://www.rfc-editor.org/rfc/rfc8628)) against the Microsoft identity platform. Microsoft’s overview of the protocol, endpoints, polling behavior, and error codes is here: [OAuth 2.0 device authorization grant (Microsoft identity platform)](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-device-code).
+
 ## Requirements
 
 - Node.js 20+ is recommended
