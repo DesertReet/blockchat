@@ -54,6 +54,10 @@ npm run deploy
 
 See [`server/README.md`](./server/README.md) for environment setup, Cloudflare bindings, and test/deploy notes.
 
+## Hosted backend
+
+If you use the BlockChat backend services hosted by Desert Reet (the default backend url at https://blockchat.desertreet.com), you agree to the [Terms of Service](https://blockchat.desertreet.com/terms-of-service) and [Privacy Policy](https://blockchat.desertreet.com/privacy-policy).
+
 ## Support
 
 Need help or want to report an issue with the live project? Join the [BlockChat Discord](https://discord.gg/invite/hyYnRARfHE).
