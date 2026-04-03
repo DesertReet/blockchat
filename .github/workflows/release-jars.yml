@@ -15,7 +15,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set mod version from release tag
         id: version
@@ -25,14 +25,22 @@ jobs:
           echo "mod_version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Using mod version: ${VERSION} (from tag ${TAG})"
 
+      - name: Cache FFmpeg downloads
+        uses: actions/cache@v5
+        with:
+          path: client/native/ffmpeg-cache
+          key: ffmpeg-cache-${{ runner.os }}-${{ hashFiles('client/build.gradle') }}
+          restore-keys: |
+            ffmpeg-cache-${{ runner.os }}-
+
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Build macOS capture helper
         working-directory: client/native/macos-capture-helper
@@ -60,7 +68,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set mod version from release tag
         id: version
@@ -71,14 +79,22 @@ jobs:
           echo "mod_version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Using mod version: ${VERSION} (from tag ${TAG})"
 
+      - name: Cache FFmpeg downloads
+        uses: actions/cache@v5
+        with:
+          path: client/native/ffmpeg-cache
+          key: ffmpeg-cache-${{ runner.os }}-${{ hashFiles('client/build.gradle') }}
+          restore-keys: |
+            ffmpeg-cache-${{ runner.os }}-
+
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Build Windows capture helper
         working-directory: client/native/windows-capture-helper
