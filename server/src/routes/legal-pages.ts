@@ -252,7 +252,7 @@ const TERMS_BODY = `
 	<strong>TL;DR</strong>
 	<p>
 		Use BlockChat only as intended: capture and send screenshots and videos from inside Minecraft to
-		your friends. Do not hack, reverse engineer, or misuse the mod or our servers. Do not spam, bypass
+		your friends. Do not hack or misuse the mod or our servers. Do not spam, bypass
 		rate limits, or upload media that was not captured from Minecraft. We may suspend accounts that
 		break these rules or harm the service.
 	</p>
@@ -306,7 +306,7 @@ const TERMS_BODY = `
 	<p>You must not:</p>
 	<ul>
 		<li>
-			<strong>Modify, hack, or reverse engineer</strong> the BlockChat mod, client, or our servers to
+			<strong>Modify or hack</strong> the BlockChat mod, client, or our servers to
 			bypass security, extract secrets, interfere with other users, or gain unauthorized access.
 		</li>
 		<li>
