@@ -42,7 +42,7 @@
 					"enabled": true
 				}
 			},
-			"r2_buckets": [{ "binding": "SNAPS_BUCKET", "bucket_name": "blockchat-media" }]
+			"r2_buckets": [{ "binding": "SNAPS_BUCKET", "bucket_name": "blockchat-test-media" }]
 		}
 	}
 }
