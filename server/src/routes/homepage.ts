@@ -1,3 +1,10 @@
+import {
+	escapeHtml,
+	FALLBACK_DOWNLOAD_LINKS,
+	type HomepageDownloadLinks,
+	getHomepageDownloadLinks,
+} from '../github-latest-release';
+
 /** Public site origin for canonical and social preview URLs (matches wrangler custom domain). */
 const HOMEPAGE_ORIGIN = 'https://blockchat.desertreet.com';
 
@@ -7,7 +14,16 @@ const HOMEPAGE_DESCRIPTION =
 /** Featured homepage trailer / overview (youtube.com/watch?v=…). */
 const HOMEPAGE_YOUTUBE_VIDEO_ID = 'PGMen8-84xw';
 
-const HOMEPAGE_HTML = `<!doctype html>
+/**
+ * Builds the public BlockChat homepage HTML, including GitHub release download links for the latest jars.
+ */
+function buildHomepageHtml(links: HomepageDownloadLinks): string {
+	const modVersionHtml = escapeHtml(links.modVersion);
+	const winUrl = escapeHtml(links.windowsUrl);
+	const armUrl = escapeHtml(links.macosArm64Url);
+	const amdUrl = escapeHtml(links.macosAmd64Url);
+
+	return `<!doctype html>
 <html lang="en">
 	<head>
 		<meta charset="utf-8" />
@@ -206,16 +222,16 @@ const HOMEPAGE_HTML = `<!doctype html>
 			</div>
 			<p>${HOMEPAGE_DESCRIPTION}</p>
 			<div class="download-wrap">
-				<p class="download-version">Minecraft Java Edition 1.21.11</p>
+				<p class="download-version">Minecraft Java Edition 1.21.11 · BlockChat ${modVersionHtml}</p>
 				<details class="download-dropdown">
 					<summary>
 						Download BlockChat
 						<span class="caret" aria-hidden="true">▸</span>
 					</summary>
 					<div class="download-menu">
-						<a href="https://blockchat-artifacts.desertreet.com/desertreet-blockchat-1.0.0-windows.jar" target="_blank" rel="noopener noreferrer">Windows</a>
-						<a href="https://blockchat-artifacts.desertreet.com/desertreet-blockchat-1.0.0-macos-arm64.jar" target="_blank" rel="noopener noreferrer">MacOS Apple Silicon</a>
-						<a href="https://blockchat-artifacts.desertreet.com/desertreet-blockchat-1.0.0-macos-amd64.jar" target="_blank" rel="noopener noreferrer">MacOS Intel</a>
+						<a href="${winUrl}" target="_blank" rel="noopener noreferrer">Windows</a>
+						<a href="${armUrl}" target="_blank" rel="noopener noreferrer">MacOS Apple Silicon</a>
+						<a href="${amdUrl}" target="_blank" rel="noopener noreferrer">MacOS Intel</a>
 					</div>
 				</details>
 			</div>
@@ -235,9 +251,22 @@ const HOMEPAGE_HTML = `<!doctype html>
 		</main>
 	</body>
 </html>`;
+}
 
-export function handleHomepage(): Response {
-	return new Response(HOMEPAGE_HTML, {
-		headers: { 'content-type': 'text/html;charset=UTF-8' },
-	});
+/**
+ * Serves the public landing page with download links resolved from the latest GitHub release.
+ */
+export async function handleHomepage(env: Env): Promise<Response> {
+	try {
+		const links = await getHomepageDownloadLinks(env);
+		const html = buildHomepageHtml(links);
+		return new Response(html, {
+			headers: { 'content-type': 'text/html;charset=UTF-8' },
+		});
+	} catch {
+		const html = buildHomepageHtml(FALLBACK_DOWNLOAD_LINKS);
+		return new Response(html, {
+			headers: { 'content-type': 'text/html;charset=UTF-8' },
+		});
+	}
 }

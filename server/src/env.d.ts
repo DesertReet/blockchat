@@ -6,5 +6,7 @@ declare namespace Cloudflare {
 		R2_ACCOUNT_ID: string;
 		R2_BUCKET_NAME: string;
 		TEST_RESET_TOKEN: string;
+		/** Optional. Raises GitHub API rate limits when set (`wrangler secret put GITHUB_TOKEN`). */
+		GITHUB_TOKEN?: string;
 	}
 }

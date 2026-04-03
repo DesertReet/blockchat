@@ -1,5 +1,6 @@
 import { env, createExecutionContext, waitOnExecutionContext, SELF } from 'cloudflare:test';
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { clearHomepageReleaseLinksCache } from '../src/github-latest-release';
 import worker from '../src/index';
 import * as presign from '../src/r2/presign';
 import { handleClientMessage } from '../src/do/messages';
@@ -858,6 +859,7 @@ function createStatefulUserDo(options: {
 }
 
 afterEach(() => {
+	clearHomepageReleaseLinksCache();
 	vi.restoreAllMocks();
 });
 
@@ -889,6 +891,10 @@ describe('BlockChat worker', () => {
 		expect(html).toContain('<title>BlockChat</title>');
 		expect(html).toContain('Created by');
 		expect(html).toContain('https://youtube.com/@DesertReet');
+		expect(html).toContain('github.com/DesertReet/blockchat/releases/download/');
+		expect(html).toContain('-windows.jar');
+		expect(html).toContain('-macos-arm64.jar');
+		expect(html).toContain('-macos-amd64.jar');
 	});
 
 	it('serves the privacy policy at /privacy-policy', async () => {

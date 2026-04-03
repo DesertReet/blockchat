@@ -24,7 +24,7 @@ export default {
 					headers: { allow: 'GET, HEAD', 'content-type': 'text/plain;charset=UTF-8' },
 				});
 			}
-			return handleHomepage();
+			return handleHomepage(env);
 		}
 
 		if (
