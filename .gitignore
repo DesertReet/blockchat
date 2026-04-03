@@ -1,0 +1,17 @@
+.DS_Store
+
+client/.gradle/
+client/build/
+client/run/
+client/native/ffmpeg-cache/
+client/native/macos-capture-helper/.build/
+client/native/macos-capture-helper/.swift-home/
+client/native/macos-capture-helper/.swift-clang-cache/
+client/native/windows-capture-helper/.build/
+
+server/node_modules/
+server/.wrangler/
+server/.dev.vars*
+server/.env*
+
+AGENTS.md

@@ -1,0 +1,6 @@
+This notice applies to BlockChat releases that bundle FFmpeg binaries.
+
+- Bundled FFmpeg binaries remain under their own upstream licenses.
+- The BlockChat repository license does not replace or relicense FFmpeg.
+- When distributing a BlockChat release that includes FFmpeg binaries, keep any
+  required upstream FFmpeg notices and obligations intact.

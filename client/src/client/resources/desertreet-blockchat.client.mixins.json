@@ -1,0 +1,12 @@
+{
+	"required": true,
+	"package": "desertreet.blockchat.mixin",
+	"compatibilityLevel": "JAVA_21",
+	"client": [
+		"ScreenshotMixin",
+		"GameRendererMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	}
+}

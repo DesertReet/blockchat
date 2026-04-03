@@ -1,0 +1,401 @@
+plugins {
+	id 'net.fabricmc.fabric-loom-remap' version "${loom_version}"
+	id 'maven-publish'
+}
+
+group = project.maven_group
+version = project.mod_version
+
+def osName = System.getProperty("os.name", "").toLowerCase(Locale.ROOT)
+def osArch = System.getProperty("os.arch", "").toLowerCase(Locale.ROOT)
+def fabricModId = "desertreet-blockchat"
+def fabricModLicense = "MIT"
+def blockchatJarVariants = [
+	[
+		platformKey: 'windows',
+		taskSuffix: 'Windows',
+		classifier: 'windows',
+		helperResourceKey: 'windows',
+		ffmpegResourceKey: 'win64',
+	],
+	[
+		platformKey: 'macos-arm64',
+		taskSuffix: 'MacOsArm64',
+		classifier: 'macos-arm64',
+		helperResourceKey: 'macos',
+		ffmpegResourceKey: 'macos-arm64',
+	],
+	[
+		platformKey: 'macos-amd64',
+		taskSuffix: 'MacOsAmd64',
+		classifier: 'macos-amd64',
+		helperResourceKey: 'macos',
+		ffmpegResourceKey: 'macos-amd64',
+	],
+]
+def blockchatPackageTasks = [:]
+
+base {
+	archivesName = fabricModId
+}
+
+repositories {
+	maven {
+		name = 'Terraformers'
+		url = 'https://maven.terraformersmc.com/releases/'
+	}
+}
+
+loom {
+	splitEnvironmentSourceSets()
+
+	mods {
+		"${fabricModId}" {
+			sourceSet sourceSets.main
+			sourceSet sourceSets.client
+		}
+	}
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:${project.minecraft_version}"
+	mappings loom.officialMojangMappings()
+	modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+	modCompileOnly "com.terraformersmc:modmenu:${project.modmenu_version}"
+}
+
+processResources {
+	inputs.property "version", project.version
+	inputs.property "modLicense", fabricModLicense
+
+	filesMatching("fabric.mod.json") {
+		expand(
+			"version": inputs.properties.version,
+			"modLicense": inputs.properties.modLicense
+		)
+	}
+}
+
+def macCaptureHelperDir = file("native/macos-capture-helper")
+def macCaptureHelperScript = macCaptureHelperDir.toPath().resolve("build-helper.sh").toFile()
+def builtMacCaptureHelper = macCaptureHelperDir.toPath().resolve(".build/release/BlockChatMacCaptureHelper").toFile()
+def isMacHost = osName.contains("mac")
+def windowsHelperDir = file("native/windows-capture-helper")
+def builtWindowsHelper = windowsHelperDir.toPath()
+	.resolve(".build/Release/BlockChatWindowsCaptureHelper.exe")
+	.toFile()
+
+if (isMacHost && macCaptureHelperScript.isFile()) {
+	def buildMacOsCaptureHelper = tasks.register("buildMacOsCaptureHelper", Exec) {
+		workingDir macCaptureHelperDir
+		commandLine macCaptureHelperScript.absolutePath
+		inputs.files(fileTree(macCaptureHelperDir) {
+			include "build-helper.sh"
+			include "Package.swift"
+			include "README.md"
+			include "Sources/**"
+		})
+		outputs.file(builtMacCaptureHelper)
+	}
+	processClientResources.dependsOn(buildMacOsCaptureHelper)
+}
+
+def ffmpegCacheDir = file("native/ffmpeg-cache")
+def sha256Hex = { File file ->
+	def digest = java.security.MessageDigest.getInstance("SHA-256")
+	file.withInputStream { input ->
+		byte[] buffer = new byte[8192]
+		for (int read = input.read(buffer); read != -1; read = input.read(buffer)) {
+			digest.update(buffer, 0, read)
+		}
+	}
+	return digest.digest().collect { String.format("%02x", it & 0xff) }.join()
+}
+def ffmpegBundles = [
+	[
+		taskSuffix: "MacOsArm64",
+		platformKey: "macos-arm64",
+		resourcePath: "blockchat-native/bins/macos-arm64",
+		assets: [
+			[
+				archiveName: "ffmpeg-8.1-macos-arm64.zip",
+				url: "https://ffmpeg.martin-riedl.de/download/macos/arm64/1774549676_8.1/ffmpeg.zip",
+				sha256: "cc3a7e0cce36c5eca6c17eeb93830984c657637a8e710dc98f19c8051201fa3a",
+				archiveType: "zip",
+				binaryNames: ["ffmpeg"]
+			]
+		]
+	],
+	[
+		taskSuffix: "MacOsAmd64",
+		platformKey: "macos-amd64",
+		resourcePath: "blockchat-native/bins/macos-amd64",
+		assets: [
+			[
+				archiveName: "ffmpeg-8.1-macos-amd64.zip",
+				url: "https://ffmpeg.martin-riedl.de/download/macos/amd64/1774556648_8.1/ffmpeg.zip",
+				sha256: "eaa8aa619f8eccc7f548a730097f5d299cbf2d418888421c137557344d821130",
+				archiveType: "zip",
+				binaryNames: ["ffmpeg"]
+			]
+		]
+	],
+	[
+		taskSuffix: "Win64",
+		platformKey: "win64",
+		resourcePath: "blockchat-native/bins/win64",
+		assets: [
+			[
+				archiveName: "ffmpeg-n8.1-7-ga3475e2554-win64-lgpl-8.1.zip",
+				url: "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-04-03-13-04/ffmpeg-n8.1-7-ga3475e2554-win64-lgpl-8.1.zip",
+				sha256: "0aa8c5dbdf5e35f7ff911f1dbca89dd150c0356d949c19678bf3aadfaba81898",
+				archiveType: "zip-nested",
+				binaryNames: ["ffmpeg.exe"]
+			]
+		]
+	]
+]
+def ffmpegDownloadTasks = []
+
+ffmpegBundles.each { ffmpegBundle ->
+	def bundle = ffmpegBundle
+	def ffmpegPlatformCacheDir = new File(ffmpegCacheDir, bundle.platformKey)
+	def ffmpegMarkerFile = new File(ffmpegPlatformCacheDir, ".downloaded")
+	def expectedMarkerContents = (
+		["platform=${bundle.platformKey}"]
+			+ bundle.assets.collect { asset ->
+				"asset=${asset.archiveName}|sha256=${asset.sha256}|url=${asset.url}"
+			}
+	).join("\n") + "\n"
+
+	def downloadTask = tasks.register("downloadFFmpeg${bundle.taskSuffix}") {
+		group = 'build'
+		description = "Downloads the bundled FFmpeg binaries for ${bundle.platformKey}"
+		outputs.file(ffmpegMarkerFile)
+		onlyIf {
+			if (!ffmpegMarkerFile.exists()) {
+				return true
+			}
+			if (ffmpegMarkerFile.text != expectedMarkerContents) {
+				return true
+			}
+			return bundle.assets.collectMany { asset -> asset.binaryNames }.any { binaryName ->
+				!new File(ffmpegPlatformCacheDir, binaryName).exists()
+			}
+		}
+		doLast {
+			ffmpegPlatformCacheDir.mkdirs()
+			logger.lifecycle("Downloading bundled FFmpeg binaries for ${bundle.platformKey} ...")
+
+			bundle.assets.each { asset ->
+				def archiveFile = new File(ffmpegPlatformCacheDir, asset.archiveName)
+				logger.lifecycle("  Fetching ${asset.archiveName} from ${asset.url}")
+
+				def currentUrl = new URL(asset.url)
+				def connection = currentUrl.openConnection()
+				def maxRedirects = 10
+				for (int i = 0; i < maxRedirects; i++) {
+					connection.setInstanceFollowRedirects(false)
+					connection.connect()
+					def responseCode = connection.getResponseCode()
+					if (responseCode == 301 || responseCode == 302 || responseCode == 303 || responseCode == 307 || responseCode == 308) {
+						def redirectLocation = connection.getHeaderField("Location")
+						currentUrl = new URL(currentUrl, redirectLocation)
+						logger.lifecycle("    Following redirect -> ${currentUrl}")
+						connection = currentUrl.openConnection()
+					} else {
+						break
+					}
+				}
+
+				archiveFile.withOutputStream { out ->
+					connection.getInputStream().withStream { inp ->
+						out << inp
+					}
+				}
+				logger.lifecycle("    Downloaded ${archiveFile.length()} bytes")
+				def actualSha256 = sha256Hex(archiveFile)
+				if (!actualSha256.equalsIgnoreCase(asset.sha256)) {
+					throw new GradleException(
+						"FFmpeg download checksum mismatch for ${bundle.platformKey} ${asset.archiveName}: expected ${asset.sha256}, got ${actualSha256}"
+					)
+				}
+				logger.lifecycle("    SHA-256 verified: ${actualSha256}")
+
+				def tmpExtract = new File(ffmpegPlatformCacheDir, "_extract-${asset.archiveName}")
+				tmpExtract.mkdirs()
+				try {
+					if (asset.archiveType == "zip" || asset.archiveType == "zip-nested") {
+						copy {
+							from zipTree(archiveFile)
+							into tmpExtract
+						}
+					} else if (asset.archiveType == "tar.xz-nested") {
+						copy {
+							from tarTree(resources.xz(archiveFile))
+							into tmpExtract
+						}
+					} else {
+						throw new GradleException("Unsupported FFmpeg archive type ${asset.archiveType} for ${bundle.platformKey}")
+					}
+
+					asset.binaryNames.each { binaryName ->
+						def extractedBinary = fileTree(tmpExtract).matching {
+							include "**/${binaryName}"
+						}.files.find { it.isFile() }
+						if (extractedBinary == null) {
+							throw new GradleException("FFmpeg download failed: expected binary ${binaryName} not found in ${archiveFile}")
+						}
+						def targetBinary = new File(ffmpegPlatformCacheDir, binaryName)
+						copy {
+							from extractedBinary
+							into ffmpegPlatformCacheDir
+						}
+						targetBinary.setExecutable(true, false)
+						logger.lifecycle("    FFmpeg binary ready: ${targetBinary.absolutePath} (${targetBinary.length()} bytes)")
+					}
+				} finally {
+					delete(tmpExtract)
+					delete(archiveFile)
+				}
+			}
+
+			bundle.assets.collectMany { it.binaryNames }.each { binaryName ->
+				def bin = new File(ffmpegPlatformCacheDir, binaryName)
+				if (!bin.exists()) {
+					throw new GradleException("FFmpeg download failed: expected binary ${binaryName} not found in ${ffmpegPlatformCacheDir}")
+				}
+				bin.setExecutable(true, false)
+			}
+
+			ffmpegMarkerFile.text = expectedMarkerContents
+		}
+	}
+
+	ffmpegDownloadTasks << downloadTask
+}
+
+processClientResources.dependsOn(ffmpegDownloadTasks)
+
+tasks.named('remapJar') {
+	destinationDirectory.set(layout.buildDirectory.dir("tmp/blockchat-remap"))
+}
+
+blockchatJarVariants.each { variant ->
+	def packageTask = tasks.register("packageBlockChat${variant.taskSuffix}Jar", Zip) {
+		group = 'build'
+		description = "Packages the BlockChat ${variant.classifier} jar."
+		dependsOn tasks.named('remapJar')
+		dependsOn ffmpegDownloadTasks
+		archiveBaseName.set("desertreet-blockchat")
+		archiveVersion.set(project.version.toString())
+		archiveClassifier.set(variant.classifier)
+		archiveExtension.set("jar")
+		destinationDirectory.set(layout.buildDirectory.dir("libs"))
+		from({
+			zipTree(tasks.named('remapJar').get().archiveFile.get().asFile)
+		}) {
+			includeEmptyDirs = false
+			eachFile { details ->
+				if (details.path.startsWith("blockchat-native/")) {
+					def keepPrefixes = [
+						"blockchat-native/bins/${variant.helperResourceKey}/",
+						"blockchat-native/bins/${variant.ffmpegResourceKey}/"
+					]
+					if (!keepPrefixes.any { prefix -> details.path.startsWith(prefix) }) {
+						details.exclude()
+					}
+				}
+			}
+		}
+	}
+	blockchatPackageTasks[variant.platformKey] = packageTask
+}
+
+tasks.named('assemble') {
+	dependsOn blockchatJarVariants.collect { blockchatPackageTasks[it.platformKey] }
+}
+
+tasks.named('build') {
+	dependsOn blockchatJarVariants.collect { blockchatPackageTasks[it.platformKey] }
+}
+
+processClientResources {
+	from({
+		builtMacCaptureHelper.isFile() ? [builtMacCaptureHelper] : []
+	}) {
+		into "blockchat-native/bins/macos"
+	}
+
+	from({
+		builtWindowsHelper.isFile() ? [builtWindowsHelper] : []
+	}) {
+		into "blockchat-native/bins/windows"
+	}
+
+	ffmpegBundles.each { ffmpegBundle ->
+		def bundle = ffmpegBundle
+		def platformCacheDir = new File(ffmpegCacheDir, bundle.platformKey)
+		from({
+			bundle.assets.collectMany { asset ->
+				asset.binaryNames.collect { binaryName ->
+					def binary = new File(platformCacheDir, binaryName)
+					binary.exists() ? [binary] : []
+				}
+			}.flatten()
+		}) {
+			into bundle.resourcePath
+		}
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	options.release = 21
+}
+
+java {
+	sourceCompatibility = JavaVersion.VERSION_21
+	targetCompatibility = JavaVersion.VERSION_21
+}
+
+jar {
+	["LICENSE", "THIRD_PARTY_NOTICES"].each { bundledLegalDoc ->
+		if (file(bundledLegalDoc).exists()) {
+			from(file(bundledLegalDoc)) {
+				rename { "${it}_${base.archivesName.get()}" }
+			}
+		}
+	}
+}
+
+tasks.register('cleanupBlockChatUniversalJar') {
+	group = 'build'
+	description = 'Deletes the generic BlockChat remap jar after platform jars are packaged.'
+	doLast {
+		def jarFile = layout.buildDirectory.file("libs/desertreet-blockchat-${project.version}.jar").get().asFile
+		if (jarFile.exists()) {
+			delete(jarFile)
+		}
+	}
+}
+
+tasks.named('build') {
+	finalizedBy tasks.named('cleanupBlockChatUniversalJar')
+}
+
+tasks.named('assemble') {
+	finalizedBy tasks.named('cleanupBlockChatUniversalJar')
+}
+
+publishing {
+	publications {
+		create("mavenJava", MavenPublication) {
+			artifactId = fabricModId
+			from components.java
+		}
+	}
+
+	repositories {
+	}
+}

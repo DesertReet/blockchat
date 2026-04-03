@@ -1,0 +1,10 @@
+.DS_Store
+.gradle/
+build/
+run/
+
+native/ffmpeg-cache/
+native/macos-capture-helper/.build/
+native/macos-capture-helper/.swift-home/
+native/macos-capture-helper/.swift-clang-cache/
+native/windows-capture-helper/.build/

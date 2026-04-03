@@ -1,0 +1,30 @@
+{
+	"schemaVersion": 1,
+	"id": "desertreet-blockchat",
+	"version": "${version}",
+	"name": "BlockChat by Desert Reet",
+	"description": "A social mod for Minecraft where you can instantly send screenshots and videos to friends.",
+	"license": "${modLicense}",
+	"icon": "assets/desertreet-blockchat/icon.png",
+	"environment": "client",
+	"contact": {
+		"homepage": "https://blockchat.desertreet.com"
+	},
+	"entrypoints": {
+		"client": [
+			"desertreet.blockchat.BlockChatClientMod"
+		],
+		"modmenu": [
+			"desertreet.blockchat.BlockChatModMenuApi"
+		]
+	},
+	"mixins": [
+		"desertreet-blockchat.client.mixins.json"
+	],
+	"depends": {
+		"fabricloader": ">=0.18.4",
+		"minecraft": "~1.21.11",
+		"java": ">=21",
+		"fabric-api": "*"
+	}
+}

@@ -1,0 +1,24 @@
+{
+	"name": "blockchat",
+	"version": "0.0.0",
+	"private": true,
+	"scripts": {
+		"deploy": "wrangler deploy",
+		"deploy:test": "wrangler deploy --env test",
+		"dev": "wrangler dev",
+		"start": "wrangler dev",
+		"test": "vitest",
+		"cf-typegen": "wrangler types",
+		"nuke:test:dos": "node scripts/nuke-test-dos.mjs"
+	},
+	"devDependencies": {
+		"@cloudflare/vitest-pool-workers": "^0.12.4",
+		"@types/node": "^25.5.0",
+		"typescript": "^5.5.2",
+		"vitest": "~3.2.0",
+		"wrangler": "^4.76.0"
+	},
+	"dependencies": {
+		"aws4fetch": "^1.0.20"
+	}
+}

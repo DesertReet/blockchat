@@ -1,0 +1,48 @@
+/**
+ * For more details on how to configure Wrangler, refer to:
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ */
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "blockchat",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-03-10",
+	"observability": {
+		"enabled": false
+	},
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"routes": [{ "pattern": "blockchat.desertreet.com", "custom_domain": true }],
+	"vars": {
+		"TEST_MODE": "0"
+	},
+	"assets": { "directory": "./public/" },
+	"durable_objects": {
+		"bindings": [{ "name": "USER_DO", "class_name": "BlockChatUserDurableObject" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["BlockChatUserDurableObject"] }],
+	"r2_buckets": [{ "binding": "SNAPS_BUCKET", "bucket_name": "blockchat-media" }],
+	"env": {
+		"test": {
+			"routes": [{ "pattern": "blockchat-test.desertreet.com", "custom_domain": true }],
+			"vars": {
+				"TEST_MODE": "1"
+			},
+			"durable_objects": {
+				"bindings": [{ "name": "USER_DO", "class_name": "BlockChatUserDurableObject" }]
+			},
+			"migrations": [{ "tag": "v1", "new_sqlite_classes": ["BlockChatUserDurableObject"] }],
+			"observability": {
+				"enabled": true,
+				"traces": {
+					"enabled": true
+				},
+				"logs": {
+					"enabled": true
+				}
+			},
+			"r2_buckets": [{ "binding": "SNAPS_BUCKET", "bucket_name": "blockchat-media" }]
+		}
+	}
+}
