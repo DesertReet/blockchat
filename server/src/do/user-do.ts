@@ -54,6 +54,22 @@ type ActivitySummary = {
 	timestamp: string;
 };
 
+function normalizeRecentTimestamp(timestamp: string | null): string | null {
+	if (timestamp == null) {
+		return null;
+	}
+	const trimmed = timestamp.trim();
+	if (trimmed.length == 0) {
+		return null;
+	}
+	const normalized = trimmed.includes('T') ? trimmed : trimmed.replace(' ', 'T') + 'Z';
+	const parsedMs = Date.parse(normalized);
+	if (Number.isNaN(parsedMs)) {
+		return trimmed;
+	}
+	return new Date(parsedMs).toISOString();
+}
+
 type SnapInboxEntry = {
 	snap_id: string;
 	upload_id: string;
@@ -1301,12 +1317,13 @@ export class BlockChatUserDurableObject extends DurableObject<Env> {
 		const activityByUuid = new Map<string, ActivitySummary>();
 
 		const updateActivity = (uuid: string, type: ActivitySummary['type'], timestamp: string | null): void => {
-			if (!timestamp) {
+			const normalizedTimestamp = normalizeRecentTimestamp(timestamp);
+			if (!normalizedTimestamp) {
 				return;
 			}
 			const existing = activityByUuid.get(uuid);
-			if (!existing || timestamp > existing.timestamp) {
-				activityByUuid.set(uuid, { type, timestamp });
+			if (!existing || normalizedTimestamp > existing.timestamp) {
+				activityByUuid.set(uuid, { type, timestamp: normalizedTimestamp });
 			}
 		};
 
@@ -1319,7 +1336,8 @@ export class BlockChatUserDurableObject extends DurableObject<Env> {
 			.toArray();
 		for (const row of sentRows) {
 			const uuid = normalizeUuid(row.to_uuid as string);
-			updateActivity(uuid, 'sent', row.sent_at as string);
+			const sentAt = normalizeRecentTimestamp(row.sent_at as string) ?? '';
+			updateActivity(uuid, 'sent', sentAt);
 			updateActivity(uuid, 'opened', (row.opened_at as string) || null);
 			updateActivity(uuid, 'dropped', (row.dropped_at as string) || null);
 			if (row.opened_at == null && row.dropped_at == null) {
@@ -1327,7 +1345,7 @@ export class BlockChatUserDurableObject extends DurableObject<Env> {
 				outgoingUnopenedByUuid.set(uuid, {
 					count: (existingPending?.count ?? 0) + 1,
 					media_type: (existingPending?.media_type ?? (row.media_type as 'image' | 'video')),
-					timestamp: existingPending?.timestamp ?? (row.sent_at as string),
+					timestamp: existingPending?.timestamp ?? sentAt,
 				});
 			}
 			if (recents.has(uuid)) {
@@ -1339,9 +1357,9 @@ export class BlockChatUserDurableObject extends DurableObject<Env> {
 				skin_url: (row.to_skin_url as string) || null,
 				last_direction: 'sent',
 				last_media_type: row.media_type as 'image' | 'video',
-				last_timestamp: row.sent_at as string,
+				last_timestamp: sentAt,
 				last_activity_type: 'sent',
-				last_activity_timestamp: row.sent_at as string,
+				last_activity_timestamp: sentAt,
 				incoming_unopened_count: 0,
 				incoming_unopened_media_type: null,
 				incoming_unopened_timestamp: null,
@@ -1361,26 +1379,28 @@ export class BlockChatUserDurableObject extends DurableObject<Env> {
 		for (const row of receivedRows) {
 			if (row.viewed_at == null) {
 				const uuid = normalizeUuid(row.from_uuid as string);
+				const sentAt = normalizeRecentTimestamp(row.sent_at as string) ?? '';
 				const existingPending = incomingUnopenedByUuid.get(uuid);
 				incomingUnopenedByUuid.set(uuid, {
 					count: (existingPending?.count ?? 0) + 1,
 					media_type: (existingPending?.media_type ?? (row.media_type as 'image' | 'video')),
-					timestamp: existingPending?.timestamp ?? (row.sent_at as string),
+					timestamp: existingPending?.timestamp ?? sentAt,
 				});
 			}
 		}
 		for (const row of receivedRows) {
 			const uuid = normalizeUuid(row.from_uuid as string);
-			updateActivity(uuid, 'received', row.sent_at as string);
+			const sentAt = normalizeRecentTimestamp(row.sent_at as string) ?? '';
+			updateActivity(uuid, 'received', sentAt);
 			const candidate: ChatRecentEntry = {
 				uuid,
 				username: row.from_username as string,
 				skin_url: (row.from_skin_url as string) || null,
 				last_direction: 'received',
 				last_media_type: row.media_type as 'image' | 'video',
-				last_timestamp: row.sent_at as string,
+				last_timestamp: sentAt,
 				last_activity_type: 'received',
-				last_activity_timestamp: row.sent_at as string,
+				last_activity_timestamp: sentAt,
 				incoming_unopened_count: 0,
 				incoming_unopened_media_type: null,
 				incoming_unopened_timestamp: null,

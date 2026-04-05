@@ -2880,6 +2880,58 @@ describe('BlockChat worker', () => {
 		});
 	});
 
+	it('keeps a newer sent snap above an older opened snap when stored timestamp formats differ', async () => {
+		const dobj = createStatefulUserDo({
+			uuid: SENDER_UUID,
+			profile: { uuid: SENDER_UUID, username: 'SenderPlayer', skin_url: null },
+		});
+		dobj.state.sentSnaps.push(
+			{
+				snap_id: 'snap-new-sent',
+				upload_id: 'upload-new-sent',
+				to_uuid: RECIPIENT_UUID,
+				to_username: 'NewestSent',
+				to_skin_url: null,
+				media_type: 'image',
+				r2_key: 'snaps/newest',
+				content_type: 'image/png',
+				media_size: 1,
+				sent_at: '2026-03-25T10:00:00.000Z',
+				delivered_at: '2026-03-25T10:00:10.000Z',
+				dropped_at: null,
+				opened_at: null,
+			},
+			{
+				snap_id: 'snap-old-opened',
+				upload_id: 'upload-old-opened',
+				to_uuid: RECIPIENT_TWO_UUID,
+				to_username: 'OlderOpened',
+				to_skin_url: null,
+				media_type: 'image',
+				r2_key: 'snaps/older',
+				content_type: 'image/png',
+				media_size: 1,
+				sent_at: '2026-03-24T09:00:00.000Z',
+				delivered_at: '2026-03-24T09:00:10.000Z',
+				dropped_at: null,
+				opened_at: '2026-03-24 12:00:00',
+			}
+		);
+
+		const sent: string[] = [];
+		const ws = { send: (message: string) => sent.push(message) } as unknown as WebSocket;
+		await handleClientMessage(dobj.dobj, ws, { type: 'get_chat_recents' });
+
+		const payload = JSON.parse(sent[0]);
+		expect(payload.type).toBe('chat_recents');
+		expect(payload.recents.map((entry: { uuid: string }) => entry.uuid)).toEqual([RECIPIENT_UUID, RECIPIENT_TWO_UUID]);
+		expect(payload.recents[1]).toMatchObject({
+			uuid: RECIPIENT_TWO_UUID,
+			last_activity_type: 'opened',
+			last_activity_timestamp: '2026-03-24T12:00:00.000Z',
+		});
+	});
+
 	it('rejects send_snap when more than ten unique recipients are selected', async () => {
 		const sender = createStatefulUserDo({
 			uuid: SENDER_UUID,
