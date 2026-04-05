@@ -1,6 +1,6 @@
 # BlockChat Client
 
-Standalone Fabric client mod for BlockChat on Minecraft Java Edition `1.21.11`.
+Standalone Fabric client mod for BlockChat on Minecraft Java Edition with a one-branch multi-version build.
 
 ## What This Project Does
 
@@ -14,7 +14,7 @@ The client mod provides:
 
 ## Requirements
 
-- Java 21
+- Java 21 and Java 25 available to Gradle toolchains
 - a working Gradle environment via the included wrapper
 - macOS for building the macOS native helper
 - Windows with Visual Studio Build Tools for building the Windows native helper
@@ -23,23 +23,39 @@ Normal UI or networking work can be done without rebuilding both native helpers,
 
 ## Development
 
-Run a development Minecraft client:
+Run the default development Minecraft client:
 
 ```bash
 ./gradlew runClient
 ```
 
-Build distributable jars:
+List the versions currently enabled by default:
 
 ```bash
-./gradlew build
+./gradlew listMinecraftVersions
+```
+
+Build one version:
+
+```bash
+./gradlew buildVersion -Pblockchat.minecraftVersion=1.21
+```
+
+Build all enabled versions:
+
+```bash
+./gradlew buildAllVersions
 ```
 
 The main outputs land in `build/libs/`:
 
-- `desertreet-blockchat-<version>-macos-arm64.jar`
-- `desertreet-blockchat-<version>-macos-amd64.jar`
-- `desertreet-blockchat-<version>-windows.jar`
+- `desertreet-blockchat-<mod-version>-macos-arm64+<minecraft-version>.jar`
+- `desertreet-blockchat-<mod-version>-macos-amd64+<minecraft-version>.jar`
+- `desertreet-blockchat-<mod-version>-windows+<minecraft-version>.jar`
+
+The default enabled matrix comes from `supported_minecraft_versions` in [`client/gradle.properties`](./gradle.properties). Override it per build with `-Pblockchat.activeVersions=1.21,1.21.11,26.1.1`.
+
+The base Minecraft `1.21` dependency is exposed as `1.21` in BlockChat build selectors and jar names, so `buildVersion -Pblockchat.minecraftVersion=1.21` produces `desertreet-blockchat-<mod-version>-<platform>+1.21.jar`.
 
 The build downloads FFmpeg bundles into `native/ffmpeg-cache/` when they are missing. If the cache is already populated, Gradle reuses it.
 
@@ -63,7 +79,10 @@ native\windows-capture-helper\build-helper.cmd
 
 ## Project Layout
 
-- `src/client/java/`: client-only mod code
-- `src/client/resources/`: mixins, lang, and client resources
-- `src/main/resources/`: Fabric metadata and icon
+- `src/core/java/`: runtime logic intended to stay version-agnostic
+- `src/shared/client/java/`: shared Minecraft/Fabric-facing code for the currently supported adapter family
+- `src/shared/client/resources/`: shared mixins, lang, and client resources
+- `src/shared/main/resources/`: shared non-versioned main resources
+- `versions/<minecraft-version>/`: per-version properties and overrides
+- `overlay_from=<minecraft-version>` in `version.properties`: reuse another version's overrides when two patch lines share the same adapter layer
 - `native/`: platform-specific capture helpers and FFmpeg cache
