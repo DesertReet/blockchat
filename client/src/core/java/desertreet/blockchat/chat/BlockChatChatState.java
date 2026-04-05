@@ -63,6 +63,15 @@ public final class BlockChatChatState {
 		return Collections.unmodifiableMap(RECENTS_BY_UUID);
 	}
 
+	public static long latestActivityTimestampMsFor(String uuid) {
+		uuid = BlockChatPlayerUuid.canonicalize(uuid);
+		if (uuid == null) {
+			return Long.MIN_VALUE;
+		}
+		RecentContact recent = RECENTS_BY_UUID.get(uuid);
+		return recent == null ? Long.MIN_VALUE : recent.latestActivityTimestampMs();
+	}
+
 	public static long recordLocalOutgoing(Collection<OutgoingTarget> targets, MediaType mediaType) {
 		if (targets == null || targets.isEmpty()) {
 			return 0L;
@@ -144,7 +153,7 @@ public final class BlockChatChatState {
 				previous.outgoingUnopenedCount(),
 				previous.outgoingUnopenedMediaType(),
 				previous.outgoingUnopenedTimestampMs(),
-				Math.max(previous.latestActivityTimestampMs(), viewedAtMs)
+				previous.latestActivityTimestampMs()
 			)
 		);
 	}

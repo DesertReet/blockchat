@@ -210,8 +210,8 @@ public final class ChatTab implements BlockChatTab {
 		graphics.drawString(font, statusText, textStartX, drawY, TEXT_SUBTITLE, false);
 
 		// Timestamp
-		if (entry.status.timestampMs > 0) {
-			String timeAgo = " · " + formatRelativeTime(entry.status.timestampMs);
+		if (entry.status.activityTimestampMs > 0) {
+			String timeAgo = " · " + formatRelativeTime(entry.status.activityTimestampMs);
 			int statusTextWidth = font.width(statusText);
 			int timeX = textStartX + statusTextWidth;
 			if (timeX + font.width(timeAgo) <= maxX) {
@@ -342,7 +342,6 @@ public final class ChatTab implements BlockChatTab {
 				mapMediaType(effectiveMediaType, recent.lastMediaType()),
 				true,
 				BlockChatStrings.NEW_BLOCK,
-				recent.incomingUnopenedTimestampMs() > 0 ? recent.incomingUnopenedTimestampMs() : recent.lastTimestampMs(),
 				recent.latestActivityTimestampMs(),
 				0
 			);
@@ -353,7 +352,6 @@ public final class ChatTab implements BlockChatTab {
 				mapMediaType(recent.outgoingUnopenedMediaType(), recent.lastMediaType()),
 				true,
 				BlockChatStrings.SENT_BLOCK,
-				recent.outgoingUnopenedTimestampMs() > 0 ? recent.outgoingUnopenedTimestampMs() : recent.lastTimestampMs(),
 				recent.latestActivityTimestampMs(),
 				1
 			);
@@ -363,7 +361,6 @@ public final class ChatTab implements BlockChatTab {
 			mapMediaType(recent.lastMediaType(), BlockChatChatState.MediaType.IMAGE),
 			false,
 			recent.lastDirection() == BlockChatChatState.Direction.SENT ? BlockChatStrings.OPENED_BLOCK : BlockChatStrings.RECEIVED_BLOCK,
-			recent.lastTimestampMs(),
 			recent.latestActivityTimestampMs(),
 			2
 		);
@@ -382,7 +379,6 @@ public final class ChatTab implements BlockChatTab {
 		MediaType mediaType,
 		boolean filled,
 		String label,
-		long timestampMs,
 		long activityTimestampMs,
 		int priorityRank
 	) {

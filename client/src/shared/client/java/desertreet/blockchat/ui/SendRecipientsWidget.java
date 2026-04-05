@@ -14,6 +14,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.player.PlayerSkin;
 import org.lwjgl.glfw.GLFW;
 import desertreet.blockchat.BlockChatStrings;
+import desertreet.blockchat.chat.BlockChatChatState;
 import desertreet.blockchat.compat.BlockChatGuiCompat;
 import desertreet.blockchat.compat.BlockChatWidgetRenderers;
 import desertreet.blockchat.send.BlockChatSnapSender;
@@ -280,7 +281,12 @@ public final class SendRecipientsWidget {
 			String skinUrl = PlayerLookupCache.resolveSkinUrl(username, record.uuid(), record.skinUrl());
 			targets.add(new BlockChatSnapSender.SendTarget(record.uuid(), username, skinUrl));
 		}
-		targets.sort(Comparator.comparing(BlockChatSnapSender.SendTarget::username, String.CASE_INSENSITIVE_ORDER));
+		targets.sort(
+			Comparator
+				.<BlockChatSnapSender.SendTarget>comparingLong(target -> BlockChatChatState.latestActivityTimestampMsFor(target.uuid()))
+				.reversed()
+				.thenComparing(BlockChatSnapSender.SendTarget::username, String.CASE_INSENSITIVE_ORDER)
+		);
 		return targets;
 	}
 
