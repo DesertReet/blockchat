@@ -14,7 +14,7 @@ _Click the image above to watch!_
 
 This repo splits BlockChat into two standalone projects:
 
-- [`client/`](./client/README.md): the Fabric client mod for Minecraft 1.21.11
+- [`client/`](./client/README.md): the Fabric client mod with a single-branch multi-version build across Minecraft `1.21` through `1.21.11` and `26.1.x`
 - [`server/`](./server/README.md): the Cloudflare Workers backend that handles auth, WebSocket messaging, Durable Objects, and media storage
 
 
@@ -31,7 +31,7 @@ Build distributable jars:
 
 ```bash
 cd client
-./gradlew build
+./gradlew buildAllVersions
 ```
 
 See [`client/README.md`](./client/README.md) for requirements, native helper notes, and packaging details.

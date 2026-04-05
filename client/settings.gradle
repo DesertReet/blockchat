@@ -10,3 +10,127 @@ pluginManagement {
 }
 
 rootProject.name = 'blockchat-client'
+
+def compareMinecraftVersions
+compareMinecraftVersions = { String left, String right ->
+	def toParts = { String value ->
+		value.tokenize('.').collect { token ->
+			token ==~ /\d+/ ? [0, Integer.parseInt(token)] : [1, token]
+		}
+	}
+	def leftParts = toParts(left)
+	def rightParts = toParts(right)
+	def maxSize = Math.max(leftParts.size(), rightParts.size())
+	for (int i = 0; i < maxSize; i++) {
+		def leftPart = i < leftParts.size() ? leftParts[i] : [0, 0]
+		def rightPart = i < rightParts.size() ? rightParts[i] : [0, 0]
+		def typeCompare = leftPart[0] <=> rightPart[0]
+		if (typeCompare != 0) {
+			return typeCompare
+		}
+		def valueCompare = leftPart[1] <=> rightPart[1]
+		if (valueCompare != 0) {
+			return valueCompare
+		}
+	}
+	0
+}
+
+def versionsDir = new File(settingsDir, "versions")
+def gradleProperties = new Properties()
+def gradlePropertiesFile = new File(settingsDir, "gradle.properties")
+if (gradlePropertiesFile.isFile()) {
+	gradlePropertiesFile.withInputStream(gradleProperties.&load)
+}
+def requestedVersionsRaw = gradle.startParameter.projectProperties["blockchat.activeVersions"]
+	?: gradle.startParameter.projectProperties["blockchat.minecraftVersion"]
+	?: gradleProperties.getProperty("supported_minecraft_versions", "")
+def requestedVersions = requestedVersionsRaw == null
+	? [] as Set
+	: requestedVersionsRaw.split(",").collect { it.trim() }.findAll { !it.isEmpty() }.toSet()
+def resolveIncludedVersionNames
+resolveIncludedVersionNames = { Collection<String> rootVersions, Map<String, Map<String, Object>> versionConfigsByName ->
+	def includedVersions = new LinkedHashSet<String>()
+	def visitingVersions = new LinkedHashSet<String>()
+	def visit
+	visit = { String versionName ->
+		if (includedVersions.contains(versionName)) {
+			return
+		}
+		def versionConfig = versionConfigsByName[versionName]
+		if (versionConfig == null) {
+			throw new GradleException("Unknown BlockChat Minecraft version '${versionName}' in the requested version set.")
+		}
+		if (!visitingVersions.add(versionName)) {
+			def cycle = (visitingVersions + versionName).join(" -> ")
+			throw new GradleException("Detected cyclic overlay_from chain in BlockChat client versions: ${cycle}")
+		}
+		def overlayFromVersion = versionConfig.overlayFrom as String
+		if (overlayFromVersion != null && !overlayFromVersion.isEmpty()) {
+			visit(overlayFromVersion)
+		}
+		visitingVersions.remove(versionName)
+		includedVersions.add(versionName)
+	}
+
+	rootVersions.each { versionName ->
+		visit(versionName)
+	}
+
+	includedVersions
+}
+
+if (versionsDir.isDirectory()) {
+	def versionDirs = versionsDir.listFiles()
+		.findAll { it.isDirectory() && new File(it, "version.properties").isFile() }
+	def versionConfigsByName = versionDirs.collectEntries { versionDir ->
+		def versionProperties = new Properties()
+		new File(versionDir, "version.properties").withInputStream(versionProperties.&load)
+		def minecraftVersion = versionProperties.getProperty("minecraft_version", "").trim()
+		def archiveMinecraftVersion = versionProperties.getProperty("archive_minecraft_version", minecraftVersion).trim()
+		def aliases = ([versionDir.name, minecraftVersion, archiveMinecraftVersion]
+			+ versionProperties.getProperty("version_aliases", "").split(",").collect { it.trim() })
+			.findAll { !it.isEmpty() }
+			.unique()
+		[(versionDir.name): [
+			dir           : versionDir,
+			overlayFrom   : versionProperties.getProperty("overlay_from", "").trim(),
+			archiveVersion: archiveMinecraftVersion,
+			aliases       : aliases,
+		]]
+	}
+	def versionNameAliases = [:] as LinkedHashMap<String, String>
+	versionConfigsByName.each { versionName, versionConfig ->
+		versionConfig.aliases.each { alias ->
+			def existingVersionName = versionNameAliases[alias]
+			if (existingVersionName != null && existingVersionName != versionName) {
+				throw new GradleException("Duplicate BlockChat Minecraft version lookup '${alias}' between ${existingVersionName} and ${versionName}.")
+			}
+			versionNameAliases[alias] = versionName
+		}
+	}
+	def resolvedRequestedVersions = requestedVersions.collect { requestedVersion ->
+		def resolvedVersion = versionNameAliases[requestedVersion]
+		if (resolvedVersion == null) {
+			throw new GradleException("Unknown BlockChat Minecraft version '${requestedVersion}' in the requested version set.")
+		}
+		resolvedVersion
+	}.toSet()
+	def includedVersionNames = requestedVersions.isEmpty()
+		? versionConfigsByName.keySet()
+		: resolveIncludedVersionNames(resolvedRequestedVersions, versionConfigsByName)
+
+	versionDirs
+		.findAll { includedVersionNames.contains(it.name) }
+		.sort { left, right ->
+			compareMinecraftVersions(
+				versionConfigsByName[left.name].archiveVersion as String,
+				versionConfigsByName[right.name].archiveVersion as String
+			)
+		}
+		.each { versionDir ->
+			def slug = "mc" + versionDir.name.replaceAll(/[^0-9A-Za-z]+/, "_")
+			include("versions:${slug}")
+			project(":versions:${slug}").projectDir = versionDir
+		}
+}

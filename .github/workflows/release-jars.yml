@@ -1,5 +1,7 @@
-# Builds platform-specific BlockChat jars and uploads them to the GitHub Release.
-# Uses the release tag as the mod version (leading "v" is stripped, e.g. v1.1.0 -> 1.1.0).
+# Builds platform-specific BlockChat jars for GitHub Releases.
+# The release tag is used as the mod version after stripping an optional leading "v", so tags like 1.1.0-beta1 and v1.1.0-beta1 are supported.
+# Stable releases also publish one Modrinth version per Minecraft target using version numbers like 1.0.0+1.21.11.
+# Prereleases still build and attach jars to the GitHub release, but skip the Modrinth publish step.
 
 name: Release platform jars
 
@@ -39,6 +41,12 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
@@ -48,7 +56,7 @@ jobs:
 
       - name: Build macOS jars
         working-directory: client
-        run: ./gradlew --no-daemon packageBlockChatMacOsArm64Jar packageBlockChatMacOsAmd64Jar -Pmod_version="${{ steps.version.outputs.mod_version }}"
+        run: ./gradlew --no-daemon packageMacReleaseJars -Pmod_version="${{ steps.version.outputs.mod_version }}"
 
       - name: Upload macOS jars to release
         shell: bash
@@ -57,7 +65,7 @@ jobs:
         working-directory: client/build/libs
         run: |
           shopt -s nullglob
-          files=(desertreet-blockchat-*-macos-*.jar)
+          files=(desertreet-blockchat-*-macos-*+*.jar)
           if [ ${#files[@]} -eq 0 ]; then
             echo "No macOS jar files found in $(pwd)"
             exit 1
@@ -93,6 +101,12 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
@@ -100,9 +114,9 @@ jobs:
         working-directory: client/native/windows-capture-helper
         run: ./build-helper.cmd
 
-      - name: Build Windows jar
+      - name: Build Windows jars
         working-directory: client
-        run: ./gradlew.bat --no-daemon packageBlockChatWindowsJar -Pmod_version="${{ steps.version.outputs.mod_version }}"
+        run: ./gradlew.bat --no-daemon packageWindowsReleaseJars -Pmod_version="${{ steps.version.outputs.mod_version }}"
 
       - name: Upload Windows jar to release
         env:
@@ -111,22 +125,22 @@ jobs:
         working-directory: client/build/libs
         run: |
           shopt -s nullglob
-          files=(desertreet-blockchat-*-windows.jar)
+          files=(desertreet-blockchat-*-windows+*.jar)
           if [ ${#files[@]} -eq 0 ]; then
             echo "No Windows jar files found in $(pwd)"
             exit 1
           fi
           gh release upload "${{ github.event.release.tag_name }}" "${files[@]}" --clobber --repo "${{ github.repository }}"
 
-  # One Modrinth version per GitHub release: single version_number (semver), multiple jars via file_parts.
-  # Modrinth expects platforms as separate files on the same version, not separate versions (see Create version API).
-  # OS/arch is conveyed by each jar filename (e.g. …-windows / …-macos-arm64). primary_file is the default download.
-  # Fabric API: project P7dR8mSH, version i5tSkVBH ([1.21.11] Fabric API 0.141.3+1.21.11). Update when client/gradle.properties changes.
   modrinth:
     name: Publish to Modrinth
+    if: ${{ !github.event.release.prerelease }}
     needs: [macos-jars, windows-jars]
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
       - name: Publish release jars to Modrinth
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -134,72 +148,5 @@ jobs:
           MODRINTH_PROJECT_ID: ${{ secrets.MODRINTH_PROJECT_ID }}
           RELEASE_BODY: ${{ github.event.release.body }}
           TAG_NAME: ${{ github.event.release.tag_name }}
-        run: |
-          set -euo pipefail
-          VERSION="${TAG_NAME#v}"
-          mkdir -p modrinth-jars
-          gh release download "${TAG_NAME}" --repo "${{ github.repository }}" \
-            --pattern "desertreet-blockchat-*.jar" \
-            -D modrinth-jars
-
-          shopt -s nullglob
-          mapfile -t jars < <(ls -1 modrinth-jars/desertreet-blockchat-*.jar | sort)
-          shopt -u nullglob
-          if [ ${#jars[@]} -eq 0 ]; then
-            echo "No BlockChat jars found in release ${TAG_NAME}"
-            exit 1
-          fi
-
-          file_parts=()
-          for ((i = 0; i < ${#jars[@]}; i++)); do
-            file_parts+=("file${i}")
-          done
-
-          primary="${file_parts[0]}"
-          for ((i = 0; i < ${#jars[@]}; i++)); do
-            if [[ "${jars[$i]}" == *windows* ]]; then
-              primary="${file_parts[$i]}"
-              break
-            fi
-          done
-
-          FILE_PARTS_JSON=$(jq -n '$ARGS.positional' --args "${file_parts[@]}")
-
-          jq -n \
-            --arg project_id "${MODRINTH_PROJECT_ID}" \
-            --arg version_number "${VERSION}" \
-            --arg name "BlockChat ${VERSION}" \
-            --arg changelog "${RELEASE_BODY:-}" \
-            --arg primary_file "${primary}" \
-            --argjson file_parts "${FILE_PARTS_JSON}" \
-            --argjson dependencies '[{"project_id":"P7dR8mSH","version_id":"i5tSkVBH","dependency_type":"required"}]' \
-            '{
-              name: $name,
-              version_number: $version_number,
-              changelog: $changelog,
-              dependencies: $dependencies,
-              game_versions: ["1.21.11"],
-              version_type: "release",
-              loaders: ["fabric"],
-              featured: false,
-              project_id: $project_id,
-              file_parts: $file_parts,
-              primary_file: $primary_file
-            }' > data.json
-
-          curl_args=(
-            curl -sS
-            -X POST "https://api.modrinth.com/v2/version"
-            -H "Authorization: ${MODRINTH_TOKEN}"
-            -H "User-Agent: ${{ github.repository }}/blockchat/${VERSION} (GitHub Actions)"
-            -F "data=@data.json;type=application/json"
-          )
-          for ((i = 0; i < ${#jars[@]}; i++)); do
-            curl_args+=(-F "file${i}=@${jars[$i]}")
-          done
-          curl_args+=(-o modrinth-response.json -w "%{http_code}")
-
-          http_code="$( "${curl_args[@]}" )"
-          echo "Modrinth API HTTP ${http_code}"
-          cat modrinth-response.json
-          test "${http_code}" = "200"
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: bash .github/scripts/publish-modrinth-versions.sh

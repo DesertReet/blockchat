@@ -1,0 +1,13 @@
+{
+	"required": true,
+	"package": "desertreet.blockchat.mixin",
+	"compatibilityLevel": "${mixinCompatibilityLevel}",
+	"client": [
+		"BlockChatScreenBaseMixin",
+		"ScreenshotMixin",
+		"GameRendererMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	}
+}

@@ -1,93 +1,169 @@
+import groovy.json.JsonOutput
+import java.util.Properties
+
 plugins {
-	id 'net.fabricmc.fabric-loom-remap' version "${loom_version}"
-	id 'maven-publish'
+	id 'base'
+	id 'net.fabricmc.fabric-loom' version "${loom_version}" apply false
+	id 'net.fabricmc.fabric-loom-remap' version "${loom_version}" apply false
 }
 
 group = project.maven_group
 version = project.mod_version
 
 def osName = System.getProperty("os.name", "").toLowerCase(Locale.ROOT)
-def osArch = System.getProperty("os.arch", "").toLowerCase(Locale.ROOT)
 def fabricModId = "desertreet-blockchat"
 def fabricModLicense = "MIT"
+
+def toTaskSuffix = { String raw ->
+	raw.replaceAll(/[^0-9A-Za-z]+/, ' ')
+		.trim()
+		.split(/\s+/)
+		.findAll { !it.isEmpty() }
+		.collect { it.substring(0, 1).toUpperCase(Locale.ROOT) + it.substring(1) }
+		.join('')
+}
+
+def compareMinecraftVersions
+compareMinecraftVersions = { String left, String right ->
+	def toParts = { String value ->
+		value.tokenize('.').collect { token ->
+			token ==~ /\d+/ ? [0, Integer.parseInt(token)] : [1, token]
+		}
+	}
+	def leftParts = toParts(left)
+	def rightParts = toParts(right)
+	def maxSize = Math.max(leftParts.size(), rightParts.size())
+	for (int i = 0; i < maxSize; i++) {
+		def leftPart = i < leftParts.size() ? leftParts[i] : [0, 0]
+		def rightPart = i < rightParts.size() ? rightParts[i] : [0, 0]
+		def typeCompare = leftPart[0] <=> rightPart[0]
+		if (typeCompare != 0) {
+			return typeCompare
+		}
+		def valueCompare = leftPart[1] <=> rightPart[1]
+		if (valueCompare != 0) {
+			return valueCompare
+		}
+	}
+	0
+}
+
+def readVersionProperties = { Project versionProject ->
+	Properties props = new Properties()
+	versionProject.file("version.properties").withInputStream(props.&load)
+	def minecraftVersion = props.getProperty("minecraft_version", "").trim()
+	if (minecraftVersion.isEmpty()) {
+		throw new GradleException("Missing minecraft_version in ${versionProject.file('version.properties')}")
+	}
+	def archiveMinecraftVersion = props.getProperty("archive_minecraft_version", minecraftVersion).trim()
+	def versionAliases = props.getProperty("version_aliases", "")
+		.split(",")
+		.collect { it.trim() }
+		.findAll { !it.isEmpty() }
+		.unique()
+	def javaVersion = props.getProperty("java_version", "21").trim()
+	def loaderVersion = props.getProperty("loader_version", rootProject.property("loader_version").toString()).trim()
+	def modMenuVersion = props.getProperty("modmenu_version", "").trim()
+	def usesRemap = props.getProperty("loom_mode", "remap").trim() != "named"
+	return [
+		minecraftVersion         : minecraftVersion,
+		minecraftDependency      : props.getProperty("minecraft_dependency", "~${minecraftVersion}").trim(),
+		javaVersion              : Integer.parseInt(javaVersion),
+		javaDependency           : props.getProperty("java_dependency", ">=" + javaVersion).trim(),
+		mixinCompatibilityLevel  : props.getProperty("mixin_compatibility_level", "JAVA_" + javaVersion).trim(),
+		usesRemap                : usesRemap,
+		loaderVersion            : loaderVersion,
+		fabricApiVersion         : props.getProperty("fabric_api_version", "").trim(),
+		modMenuVersion           : modMenuVersion,
+		modMenuEnabled           : !modMenuVersion.isEmpty(),
+		archiveMinecraftVersion  : archiveMinecraftVersion,
+		overlayFromVersion       : props.getProperty("overlay_from", "").trim(),
+		lookupNames             : ([versionProject.projectDir.name, minecraftVersion, archiveMinecraftVersion] + versionAliases).unique(),
+	]
+}
+
+def versionProjects = subprojects.findAll { it.file("version.properties").isFile() }
+def versionConfigsByPath = versionProjects.collectEntries { versionProject ->
+	[(versionProject.path): readVersionProperties(versionProject)]
+}
+def orderedVersionProjects = versionProjects.sort { left, right ->
+	compareMinecraftVersions(
+		versionConfigsByPath[left.path].archiveMinecraftVersion,
+		versionConfigsByPath[right.path].archiveMinecraftVersion
+	)
+}
+def versionProjectByLookupName = [:] as LinkedHashMap<String, Project>
+orderedVersionProjects.each { versionProject ->
+	def versionConfig = versionConfigsByPath[versionProject.path]
+	versionConfig.lookupNames.each { lookupName ->
+		def existingProject = versionProjectByLookupName[lookupName]
+		if (existingProject != null && existingProject.path != versionProject.path) {
+			throw new GradleException(
+				"Duplicate BlockChat Minecraft version lookup '${lookupName}' between ${existingProject.projectDir.name} and ${versionProject.projectDir.name}."
+			)
+		}
+		versionProjectByLookupName[lookupName] = versionProject
+	}
+}
+def resolveOverlayProjects
+resolveOverlayProjects = { Project versionProject, Set<String> seenPaths = [] as Set<String> ->
+	if (!seenPaths.add(versionProject.path)) {
+		def cycle = (seenPaths + versionProject.path).collect { path ->
+			versionConfigsByPath[path]?.minecraftVersion ?: path
+		}.join(" -> ")
+		throw new GradleException("Detected cyclic BlockChat version overlay chain: ${cycle}")
+	}
+	def versionConfig = versionConfigsByPath[versionProject.path]
+	def overlayFromVersion = versionConfig.overlayFromVersion
+	if (overlayFromVersion.isEmpty()) {
+		return []
+	}
+	def overlayProject = versionProjectByLookupName[overlayFromVersion]
+	if (overlayProject == null) {
+		throw new GradleException(
+			"BlockChat Minecraft ${versionConfig.minecraftVersion} declares overlay_from=${overlayFromVersion}, but that version is not configured."
+		)
+	}
+	return resolveOverlayProjects(overlayProject, seenPaths) + [overlayProject]
+}
+def overlayProjectsByPath = orderedVersionProjects.collectEntries { versionProject ->
+	[(versionProject.path): resolveOverlayProjects(versionProject)]
+}
+
 def blockchatJarVariants = [
 	[
-		platformKey: 'windows',
-		taskSuffix: 'Windows',
-		classifier: 'windows',
+		platformKey      : 'windows',
+		taskSuffix       : 'Windows',
+		classifier       : 'windows',
 		helperResourceKey: 'windows',
 		ffmpegResourceKey: 'win64',
 	],
 	[
-		platformKey: 'macos-arm64',
-		taskSuffix: 'MacOsArm64',
-		classifier: 'macos-arm64',
+		platformKey      : 'macos-arm64',
+		taskSuffix       : 'MacOsArm64',
+		classifier       : 'macos-arm64',
 		helperResourceKey: 'macos',
 		ffmpegResourceKey: 'macos-arm64',
 	],
 	[
-		platformKey: 'macos-amd64',
-		taskSuffix: 'MacOsAmd64',
-		classifier: 'macos-amd64',
+		platformKey      : 'macos-amd64',
+		taskSuffix       : 'MacOsAmd64',
+		classifier       : 'macos-amd64',
 		helperResourceKey: 'macos',
 		ffmpegResourceKey: 'macos-amd64',
 	],
 ]
-def blockchatPackageTasks = [:]
-
-base {
-	archivesName = fabricModId
-}
-
-repositories {
-	maven {
-		name = 'Terraformers'
-		url = 'https://maven.terraformersmc.com/releases/'
-	}
-}
-
-loom {
-	splitEnvironmentSourceSets()
-
-	mods {
-		"${fabricModId}" {
-			sourceSet sourceSets.main
-			sourceSet sourceSets.client
-		}
-	}
-}
-
-dependencies {
-	minecraft "com.mojang:minecraft:${project.minecraft_version}"
-	mappings loom.officialMojangMappings()
-	modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
-	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
-	modCompileOnly "com.terraformersmc:modmenu:${project.modmenu_version}"
-}
-
-processResources {
-	inputs.property "version", project.version
-	inputs.property "modLicense", fabricModLicense
-
-	filesMatching("fabric.mod.json") {
-		expand(
-			"version": inputs.properties.version,
-			"modLicense": inputs.properties.modLicense
-		)
-	}
-}
 
 def macCaptureHelperDir = file("native/macos-capture-helper")
 def macCaptureHelperScript = macCaptureHelperDir.toPath().resolve("build-helper.sh").toFile()
 def builtMacCaptureHelper = macCaptureHelperDir.toPath().resolve(".build/release/BlockChatMacCaptureHelper").toFile()
 def isMacHost = osName.contains("mac")
-def windowsHelperDir = file("native/windows-capture-helper")
-def builtWindowsHelper = windowsHelperDir.toPath()
-	.resolve(".build/Release/BlockChatWindowsCaptureHelper.exe")
-	.toFile()
+TaskProvider<?> buildMacOsCaptureHelper = null
 
 if (isMacHost && macCaptureHelperScript.isFile()) {
-	def buildMacOsCaptureHelper = tasks.register("buildMacOsCaptureHelper", Exec) {
+	buildMacOsCaptureHelper = tasks.register("buildMacOsCaptureHelper", Exec) {
+		group = 'blockchat'
+		description = 'Builds the macOS native capture helper used by packaged jars.'
 		workingDir macCaptureHelperDir
 		commandLine macCaptureHelperScript.absolutePath
 		inputs.files(fileTree(macCaptureHelperDir) {
@@ -98,8 +174,12 @@ if (isMacHost && macCaptureHelperScript.isFile()) {
 		})
 		outputs.file(builtMacCaptureHelper)
 	}
-	processClientResources.dependsOn(buildMacOsCaptureHelper)
 }
+
+def windowsHelperDir = file("native/windows-capture-helper")
+def builtWindowsHelper = windowsHelperDir.toPath()
+	.resolve(".build/Release/BlockChatWindowsCaptureHelper.exe")
+	.toFile()
 
 def ffmpegCacheDir = file("native/ffmpeg-cache")
 def sha256Hex = { File file ->
@@ -110,55 +190,55 @@ def sha256Hex = { File file ->
 			digest.update(buffer, 0, read)
 		}
 	}
-	return digest.digest().collect { String.format("%02x", it & 0xff) }.join()
+	digest.digest().collect { String.format("%02x", it & 0xff) }.join()
 }
+
 def ffmpegBundles = [
 	[
-		taskSuffix: "MacOsArm64",
-		platformKey: "macos-arm64",
+		taskSuffix  : "MacOsArm64",
+		platformKey : "macos-arm64",
 		resourcePath: "blockchat-native/bins/macos-arm64",
-		assets: [
+		assets      : [
 			[
 				archiveName: "ffmpeg-8.1-macos-arm64.zip",
-				url: "https://ffmpeg.martin-riedl.de/download/macos/arm64/1774549676_8.1/ffmpeg.zip",
-				sha256: "cc3a7e0cce36c5eca6c17eeb93830984c657637a8e710dc98f19c8051201fa3a",
+				url        : "https://ffmpeg.martin-riedl.de/download/macos/arm64/1774549676_8.1/ffmpeg.zip",
+				sha256     : "cc3a7e0cce36c5eca6c17eeb93830984c657637a8e710dc98f19c8051201fa3a",
 				archiveType: "zip",
 				binaryNames: ["ffmpeg"]
 			]
 		]
 	],
 	[
-		taskSuffix: "MacOsAmd64",
-		platformKey: "macos-amd64",
+		taskSuffix  : "MacOsAmd64",
+		platformKey : "macos-amd64",
 		resourcePath: "blockchat-native/bins/macos-amd64",
-		assets: [
+		assets      : [
 			[
 				archiveName: "ffmpeg-8.1-macos-amd64.zip",
-				url: "https://ffmpeg.martin-riedl.de/download/macos/amd64/1774556648_8.1/ffmpeg.zip",
-				sha256: "eaa8aa619f8eccc7f548a730097f5d299cbf2d418888421c137557344d821130",
+				url        : "https://ffmpeg.martin-riedl.de/download/macos/amd64/1774556648_8.1/ffmpeg.zip",
+				sha256     : "eaa8aa619f8eccc7f548a730097f5d299cbf2d418888421c137557344d821130",
 				archiveType: "zip",
 				binaryNames: ["ffmpeg"]
 			]
 		]
 	],
 	[
-		taskSuffix: "Win64",
-		platformKey: "win64",
+		taskSuffix  : "Win64",
+		platformKey : "win64",
 		resourcePath: "blockchat-native/bins/win64",
-		assets: [
+		assets      : [
 			[
 				archiveName: "ffmpeg-n8.1-7-ga3475e2554-win64-lgpl-8.1.zip",
-				url: "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-04-03-13-04/ffmpeg-n8.1-7-ga3475e2554-win64-lgpl-8.1.zip",
-				sha256: "0aa8c5dbdf5e35f7ff911f1dbca89dd150c0356d949c19678bf3aadfaba81898",
+				url        : "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-04-03-13-04/ffmpeg-n8.1-7-ga3475e2554-win64-lgpl-8.1.zip",
+				sha256     : "0aa8c5dbdf5e35f7ff911f1dbca89dd150c0356d949c19678bf3aadfaba81898",
 				archiveType: "zip-nested",
 				binaryNames: ["ffmpeg.exe"]
 			]
 		]
 	]
 ]
-def ffmpegDownloadTasks = []
 
-ffmpegBundles.each { ffmpegBundle ->
+def ffmpegDownloadTasks = ffmpegBundles.collect { ffmpegBundle ->
 	def bundle = ffmpegBundle
 	def ffmpegPlatformCacheDir = new File(ffmpegCacheDir, bundle.platformKey)
 	def ffmpegMarkerFile = new File(ffmpegPlatformCacheDir, ".downloaded")
@@ -169,8 +249,8 @@ ffmpegBundles.each { ffmpegBundle ->
 			}
 	).join("\n") + "\n"
 
-	def downloadTask = tasks.register("downloadFFmpeg${bundle.taskSuffix}") {
-		group = 'build'
+	tasks.register("downloadFFmpeg${bundle.taskSuffix}") {
+		group = 'blockchat'
 		description = "Downloads the bundled FFmpeg binaries for ${bundle.platformKey}"
 		outputs.file(ffmpegMarkerFile)
 		onlyIf {
@@ -180,7 +260,7 @@ ffmpegBundles.each { ffmpegBundle ->
 			if (ffmpegMarkerFile.text != expectedMarkerContents) {
 				return true
 			}
-			return bundle.assets.collectMany { asset -> asset.binaryNames }.any { binaryName ->
+			bundle.assets.collectMany { asset -> asset.binaryNames }.any { binaryName ->
 				!new File(ffmpegPlatformCacheDir, binaryName).exists()
 			}
 		}
@@ -272,130 +352,372 @@ ffmpegBundles.each { ffmpegBundle ->
 			ffmpegMarkerFile.text = expectedMarkerContents
 		}
 	}
-
-	ffmpegDownloadTasks << downloadTask
 }
 
-processClientResources.dependsOn(ffmpegDownloadTasks)
+configure(orderedVersionProjects) { Project versionProject ->
+	def versionConfig = versionConfigsByPath[versionProject.path]
+	def overlayProjects = overlayProjectsByPath[versionProject.path]
+	def loomPluginId = versionConfig.usesRemap ? "net.fabricmc.fabric-loom-remap" : "net.fabricmc.fabric-loom"
 
-tasks.named('remapJar') {
-	destinationDirectory.set(layout.buildDirectory.dir("tmp/blockchat-remap"))
-}
+	versionProject.apply plugin: loomPluginId
+	versionProject.apply plugin: "maven-publish"
 
-blockchatJarVariants.each { variant ->
-	def packageTask = tasks.register("packageBlockChat${variant.taskSuffix}Jar", Zip) {
-		group = 'build'
-		description = "Packages the BlockChat ${variant.classifier} jar."
-		dependsOn tasks.named('remapJar')
+	versionProject.group = rootProject.group
+	versionProject.version = rootProject.version
+
+	def mergedClientJavaDir = versionProject.layout.buildDirectory.dir("generated/blockchat/client/java")
+	def mergedClientResourcesDir = versionProject.layout.buildDirectory.dir("generated/blockchat/client/resources")
+	def mergedMainResourcesDir = versionProject.layout.buildDirectory.dir("generated/blockchat/main/resources")
+	def generatedMetadataDir = versionProject.layout.buildDirectory.dir("generated/blockchat/version-metadata")
+
+	def fabricModJson = [
+		schemaVersion: 1,
+		id           : fabricModId,
+		version      : versionProject.version.toString(),
+		name         : "BlockChat by Desert Reet",
+		description  : "A social mod for Minecraft where you can instantly send screenshots and videos to friends.",
+		license      : fabricModLicense,
+		icon         : "assets/desertreet-blockchat/icon.png",
+		environment  : "client",
+		contact      : [
+			homepage: "https://blockchat.desertreet.com"
+		],
+		entrypoints  : [
+			client: ["desertreet.blockchat.BlockChatClientMod"]
+		] + (versionConfig.modMenuEnabled
+			? [modmenu: ["desertreet.blockchat.BlockChatModMenuApi"]]
+			: [:]),
+		mixins       : [
+			"desertreet-blockchat.client.mixins.json"
+		],
+			depends      : [
+				fabricloader: ">=" + versionConfig.loaderVersion,
+				minecraft   : versionConfig.minecraftDependency,
+				java        : versionConfig.javaDependency,
+				"fabric-api": ">=" + versionConfig.fabricApiVersion
+			]
+		]
+	def generateMetadata = versionProject.tasks.register("generateBlockChatMetadata") {
+		def metadataFile = generatedMetadataDir.map { new File(it.asFile, "fabric.mod.json") }
+		outputs.file(metadataFile)
+		doLast {
+			def generatedMetadataDirFile = generatedMetadataDir.get().asFile
+			generatedMetadataDirFile.mkdirs()
+			new File(generatedMetadataDirFile, "fabric.mod.json").text =
+				JsonOutput.prettyPrint(JsonOutput.toJson(fabricModJson)) + "\n"
+		}
+	}
+
+	def mergeClientSources = versionProject.tasks.register("mergeBlockChatClientSources", Sync) {
+		duplicatesStrategy = org.gradle.api.file.DuplicatesStrategy.INCLUDE
+		from(rootProject.file("src/core/java"))
+		from(rootProject.file("src/shared/client/java"))
+		overlayProjects.each { overlayProject ->
+			from(overlayProject.file("src/client/java"))
+		}
+		from(versionProject.file("src/client/java"))
+		into mergedClientJavaDir
+	}
+	def mergeClientResources = versionProject.tasks.register("mergeBlockChatClientResources", Sync) {
+		duplicatesStrategy = org.gradle.api.file.DuplicatesStrategy.INCLUDE
+		from(rootProject.file("src/shared/client/resources"))
+		overlayProjects.each { overlayProject ->
+			from(overlayProject.file("src/client/resources"))
+		}
+		from(versionProject.file("src/client/resources"))
+		into mergedClientResourcesDir
+	}
+	def mergeMainResources = versionProject.tasks.register("mergeBlockChatMainResources", Sync) {
+		duplicatesStrategy = org.gradle.api.file.DuplicatesStrategy.INCLUDE
+		dependsOn generateMetadata
+		from(generatedMetadataDir)
+		from(rootProject.file("src/shared/main/resources"))
+		overlayProjects.each { overlayProject ->
+			from(overlayProject.file("src/main/resources"))
+		}
+		from(versionProject.file("src/main/resources"))
+		into mergedMainResourcesDir
+	}
+
+	versionProject.base {
+		archivesName = rootProject.property("archives_base_name").toString()
+	}
+
+	versionProject.repositories {
+		maven {
+			name = 'Fabric'
+			url = 'https://maven.fabricmc.net/'
+		}
+		maven {
+			name = 'Terraformers'
+			url = 'https://maven.terraformersmc.com/releases/'
+		}
+		mavenCentral()
+	}
+
+	versionProject.loom {
+		splitEnvironmentSourceSets()
+
+		mods {
+			"${fabricModId}" {
+				sourceSet versionProject.sourceSets.main
+				sourceSet versionProject.sourceSets.client
+			}
+		}
+	}
+
+	versionProject.sourceSets {
+		main {
+			java.setSrcDirs([])
+			resources.setSrcDirs([mergedMainResourcesDir])
+		}
+		client {
+			java.setSrcDirs([mergedClientJavaDir])
+			resources.setSrcDirs([mergedClientResourcesDir])
+		}
+	}
+
+	if (!versionConfig.modMenuEnabled) {
+		versionProject.sourceSets.client.java.exclude("desertreet/blockchat/BlockChatModMenuApi.java")
+	}
+
+	versionProject.dependencies {
+		minecraft "com.mojang:minecraft:${versionConfig.minecraftVersion}"
+
+		if (versionConfig.usesRemap) {
+			mappings versionProject.loom.officialMojangMappings()
+			modImplementation "net.fabricmc:fabric-loader:${versionConfig.loaderVersion}"
+			modImplementation "net.fabricmc.fabric-api:fabric-api:${versionConfig.fabricApiVersion}"
+			if (versionConfig.modMenuEnabled) {
+				modCompileOnly "com.terraformersmc:modmenu:${versionConfig.modMenuVersion}"
+			}
+		} else {
+			implementation "net.fabricmc:fabric-loader:${versionConfig.loaderVersion}"
+			implementation "net.fabricmc.fabric-api:fabric-api:${versionConfig.fabricApiVersion}"
+			if (versionConfig.modMenuEnabled) {
+				compileOnly "com.terraformersmc:modmenu:${versionConfig.modMenuVersion}"
+			}
+		}
+	}
+
+	versionProject.tasks.named("compileClientJava").configure {
+		dependsOn mergeClientSources
+	}
+
+	versionProject.tasks.named("processResources").configure {
+		dependsOn mergeMainResources
+	}
+
+	versionProject.tasks.named("processClientResources").configure {
+		dependsOn mergeClientResources
 		dependsOn ffmpegDownloadTasks
-		archiveBaseName.set("desertreet-blockchat")
-		archiveVersion.set(project.version.toString())
-		archiveClassifier.set(variant.classifier)
-		archiveExtension.set("jar")
-		destinationDirectory.set(layout.buildDirectory.dir("libs"))
+		if (buildMacOsCaptureHelper != null) {
+			dependsOn buildMacOsCaptureHelper
+		}
+
+		inputs.property "mixinCompatibilityLevel", versionConfig.mixinCompatibilityLevel
+
+		filesMatching("desertreet-blockchat.client.mixins.json") {
+			expand("mixinCompatibilityLevel": inputs.properties.mixinCompatibilityLevel)
+		}
+
 		from({
-			zipTree(tasks.named('remapJar').get().archiveFile.get().asFile)
+			builtMacCaptureHelper.isFile() ? [builtMacCaptureHelper] : []
 		}) {
-			includeEmptyDirs = false
-			eachFile { details ->
-				if (details.path.startsWith("blockchat-native/")) {
-					def keepPrefixes = [
-						"blockchat-native/bins/${variant.helperResourceKey}/",
-						"blockchat-native/bins/${variant.ffmpegResourceKey}/"
-					]
-					if (!keepPrefixes.any { prefix -> details.path.startsWith(prefix) }) {
-						details.exclude()
+			into "blockchat-native/bins/macos"
+		}
+
+		from({
+			builtWindowsHelper.isFile() ? [builtWindowsHelper] : []
+		}) {
+			into "blockchat-native/bins/windows"
+		}
+
+		ffmpegBundles.each { ffmpegBundle ->
+			def bundle = ffmpegBundle
+			def platformCacheDir = new File(ffmpegCacheDir, bundle.platformKey)
+			from({
+				bundle.assets.collectMany { asset ->
+					asset.binaryNames.collect { binaryName ->
+						def binary = new File(platformCacheDir, binaryName)
+						binary.exists() ? [binary] : []
+					}
+				}.flatten()
+			}) {
+				into bundle.resourcePath
+			}
+		}
+	}
+
+	versionProject.tasks.withType(JavaCompile).configureEach {
+		options.release = versionConfig.javaVersion
+	}
+
+	versionProject.java {
+		toolchain {
+			languageVersion = JavaLanguageVersion.of(versionConfig.javaVersion)
+		}
+		sourceCompatibility = JavaVersion.toVersion(versionConfig.javaVersion)
+		targetCompatibility = JavaVersion.toVersion(versionConfig.javaVersion)
+	}
+
+	versionProject.jar {
+		["LICENSE", "THIRD_PARTY_NOTICES"].each { bundledLegalDoc ->
+			def docFile = rootProject.file(bundledLegalDoc)
+			if (docFile.exists()) {
+				from(docFile) {
+					rename { "${it}_${versionProject.base.archivesName.get()}" }
+				}
+			}
+		}
+	}
+
+	if (versionConfig.usesRemap) {
+		versionProject.tasks.named("remapJar").configure {
+			destinationDirectory.set(versionProject.layout.buildDirectory.dir("tmp/blockchat-remap"))
+		}
+	}
+
+	def upstreamJarTaskName = versionConfig.usesRemap ? "remapJar" : "jar"
+	def packageTasks = blockchatJarVariants.collect { variant ->
+		def taskName = "packageBlockChat${variant.taskSuffix}Jar"
+		versionProject.tasks.register(taskName, Zip) {
+			group = "blockchat"
+			description = "Packages the BlockChat ${variant.classifier} jar for Minecraft ${versionConfig.archiveMinecraftVersion}."
+			dependsOn versionProject.tasks.named(upstreamJarTaskName)
+			dependsOn ffmpegDownloadTasks
+			archiveBaseName.set(fabricModId)
+			archiveVersion.set(versionProject.version.toString())
+			archiveClassifier.set("${variant.classifier}+${versionConfig.archiveMinecraftVersion}")
+			archiveExtension.set("jar")
+			destinationDirectory.set(rootProject.layout.buildDirectory.dir("libs"))
+			from({
+				zipTree(versionProject.tasks.named(upstreamJarTaskName).get().archiveFile.get().asFile)
+			}) {
+				includeEmptyDirs = false
+				eachFile { details ->
+					if (details.path.startsWith("blockchat-native/")) {
+						def keepPrefixes = [
+							"blockchat-native/bins/${variant.helperResourceKey}/",
+							"blockchat-native/bins/${variant.ffmpegResourceKey}/"
+						]
+						if (!keepPrefixes.any { prefix -> details.path.startsWith(prefix) }) {
+							details.exclude()
+						}
 					}
 				}
 			}
 		}
 	}
-	blockchatPackageTasks[variant.platformKey] = packageTask
-}
 
-tasks.named('assemble') {
-	dependsOn blockchatJarVariants.collect { blockchatPackageTasks[it.platformKey] }
-}
-
-tasks.named('build') {
-	dependsOn blockchatJarVariants.collect { blockchatPackageTasks[it.platformKey] }
-}
-
-processClientResources {
-	from({
-		builtMacCaptureHelper.isFile() ? [builtMacCaptureHelper] : []
-	}) {
-		into "blockchat-native/bins/macos"
+	versionProject.tasks.named("assemble").configure {
+		dependsOn packageTasks
 	}
 
-	from({
-		builtWindowsHelper.isFile() ? [builtWindowsHelper] : []
-	}) {
-		into "blockchat-native/bins/windows"
-	}
-
-	ffmpegBundles.each { ffmpegBundle ->
-		def bundle = ffmpegBundle
-		def platformCacheDir = new File(ffmpegCacheDir, bundle.platformKey)
-		from({
-			bundle.assets.collectMany { asset ->
-				asset.binaryNames.collect { binaryName ->
-					def binary = new File(platformCacheDir, binaryName)
-					binary.exists() ? [binary] : []
-				}
-			}.flatten()
-		}) {
-			into bundle.resourcePath
-		}
+	versionProject.tasks.named("build").configure {
+		dependsOn packageTasks
 	}
 }
 
-tasks.withType(JavaCompile).configureEach {
-	options.release = 21
+def defaultMinecraftVersion = rootProject.property("default_minecraft_version").toString()
+def defaultVersionProject = versionProjectByLookupName[defaultMinecraftVersion]
+def effectiveDefaultVersionProject = defaultVersionProject ?: orderedVersionProjects.find()
+if (effectiveDefaultVersionProject == null) {
+	throw new GradleException("No BlockChat version projects were included. Check versions/*/version.properties or the active version filter.")
 }
 
-java {
-	sourceCompatibility = JavaVersion.VERSION_21
-	targetCompatibility = JavaVersion.VERSION_21
-}
-
-jar {
-	["LICENSE", "THIRD_PARTY_NOTICES"].each { bundledLegalDoc ->
-		if (file(bundledLegalDoc).exists()) {
-			from(file(bundledLegalDoc)) {
-				rename { "${it}_${base.archivesName.get()}" }
-			}
-		}
-	}
-}
-
-tasks.register('cleanupBlockChatUniversalJar') {
-	group = 'build'
-	description = 'Deletes the generic BlockChat remap jar after platform jars are packaged.'
+tasks.register("listMinecraftVersions") {
+	group = "blockchat"
+	description = "Prints the supported BlockChat Minecraft versions."
 	doLast {
-		def jarFile = layout.buildDirectory.file("libs/desertreet-blockchat-${project.version}.jar").get().asFile
-		if (jarFile.exists()) {
-			delete(jarFile)
+		orderedVersionProjects.each { versionProject ->
+			println(versionConfigsByPath[versionProject.path].archiveMinecraftVersion)
 		}
 	}
 }
 
-tasks.named('build') {
-	finalizedBy tasks.named('cleanupBlockChatUniversalJar')
+tasks.register("buildDefaultVersion") {
+	group = "blockchat"
+	description = "Builds the default BlockChat Minecraft version (${versionConfigsByPath[effectiveDefaultVersionProject.path].archiveMinecraftVersion})."
+	dependsOn("${effectiveDefaultVersionProject.path}:build")
 }
 
-tasks.named('assemble') {
-	finalizedBy tasks.named('cleanupBlockChatUniversalJar')
+tasks.register("assembleDefaultVersion") {
+	group = "blockchat"
+	description = "Assembles the default BlockChat Minecraft version (${versionConfigsByPath[effectiveDefaultVersionProject.path].archiveMinecraftVersion})."
+	dependsOn("${effectiveDefaultVersionProject.path}:assemble")
 }
 
-publishing {
-	publications {
-		create("mavenJava", MavenPublication) {
-			artifactId = fabricModId
-			from components.java
+tasks.register("buildAllVersions") {
+	group = "blockchat"
+	description = "Builds every configured BlockChat Minecraft version."
+	dependsOn(orderedVersionProjects.collect { "${it.path}:build" })
+}
+
+tasks.register("assembleAllVersions") {
+	group = "blockchat"
+	description = "Assembles every configured BlockChat Minecraft version."
+	dependsOn(orderedVersionProjects.collect { "${it.path}:assemble" })
+}
+
+tasks.register("packageMacReleaseJars") {
+	group = "blockchat"
+	description = "Packages every configured macOS release jar."
+	dependsOn(orderedVersionProjects.collectMany { versionProject ->
+		[
+			"${versionProject.path}:packageBlockChatMacOsArm64Jar",
+			"${versionProject.path}:packageBlockChatMacOsAmd64Jar"
+		]
+	})
+}
+
+tasks.register("packageWindowsReleaseJars") {
+	group = "blockchat"
+	description = "Packages every configured Windows release jar."
+	dependsOn(orderedVersionProjects.collect { "${it.path}:packageBlockChatWindowsJar" })
+}
+
+tasks.register("buildVersion") {
+	group = "blockchat"
+	description = "Builds one Minecraft version. Use -Pblockchat.minecraftVersion=<version>."
+	def requestedMinecraftVersion = providers.gradleProperty("blockchat.minecraftVersion").orNull
+	if (requestedMinecraftVersion != null) {
+		def versionProject = versionProjectByLookupName[requestedMinecraftVersion]
+		if (versionProject == null) {
+			throw new GradleException("Unsupported BlockChat Minecraft version '${requestedMinecraftVersion}'. Run listMinecraftVersions to see valid values.")
+		}
+		dependsOn("${versionProject.path}:build")
+	}
+	doFirst {
+		if (requestedMinecraftVersion == null) {
+			throw new GradleException("Missing -Pblockchat.minecraftVersion=<version>. Run listMinecraftVersions to see valid values.")
 		}
 	}
+}
 
-	repositories {
+orderedVersionProjects.each { versionProject ->
+	def minecraftVersion = versionConfigsByPath[versionProject.path].archiveMinecraftVersion
+	def taskSuffix = toTaskSuffix(minecraftVersion)
+	tasks.register("buildMinecraft${taskSuffix}") {
+		group = "blockchat"
+		description = "Builds BlockChat for Minecraft ${minecraftVersion}."
+		dependsOn("${versionProject.path}:build")
 	}
+	tasks.register("assembleMinecraft${taskSuffix}") {
+		group = "blockchat"
+		description = "Assembles BlockChat for Minecraft ${minecraftVersion}."
+		dependsOn("${versionProject.path}:assemble")
+	}
+}
+
+tasks.named("assemble").configure {
+	dependsOn(tasks.named("assembleDefaultVersion"))
+}
+
+tasks.named("build").configure {
+	dependsOn(tasks.named("buildDefaultVersion"))
+}
+
+tasks.named("clean").configure {
+	dependsOn(orderedVersionProjects.collect { "${it.path}:clean" })
 }
