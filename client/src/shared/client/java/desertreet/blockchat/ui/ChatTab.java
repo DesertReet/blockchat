@@ -322,7 +322,6 @@ public final class ChatTab implements BlockChatTab {
 
 		entries.sort(Comparator
 			.<ChatFriendEntry>comparingLong(e -> e.status == null ? Long.MIN_VALUE : e.status.activityTimestampMs).reversed()
-			.thenComparing(e -> e.status == null ? Integer.MAX_VALUE : e.status.priorityRank)
 			.thenComparing(e -> e.username, String.CASE_INSENSITIVE_ORDER)
 		);
 	}

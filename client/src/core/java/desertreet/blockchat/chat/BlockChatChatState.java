@@ -418,7 +418,11 @@ public final class BlockChatChatState {
 		try {
 			return Instant.parse(timestamp).toEpochMilli();
 		} catch (Exception ignored) {
-			return System.currentTimeMillis();
+			try {
+				return Instant.parse(timestamp.replace(" ", "T") + "Z").toEpochMilli();
+			} catch (Exception ignoredAgain) {
+				return System.currentTimeMillis();
+			}
 		}
 	}
 
